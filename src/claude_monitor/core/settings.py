@@ -12,6 +12,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from claude_monitor import __version__
+from claude_monitor.core.models import Provider
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class LastUsedParams:
         """Save current settings as last used."""
         try:
             params = {
+                "provider": settings.provider,
                 "theme": settings.theme,
                 "timezone": settings.timezone,
                 "time_format": settings.time_format,
@@ -97,6 +99,11 @@ class Settings(BaseSettings):
         cli_prog_name="claude-monitor",
         cli_kebab_case=True,
         cli_implicit_flags=True,
+    )
+
+    provider: Literal["anthropic", "z_ai", "openai", "google", "all"] = Field(
+        default="all",
+        description="Provider to monitor (anthropic, z_ai, openai, google, all)",
     )
 
     plan: Literal["pro", "max5", "max20", "custom"] = Field(
@@ -181,6 +188,20 @@ class Settings(BaseSettings):
                 return v_lower
             raise ValueError(
                 f"Invalid plan: {v}. Must be one of: {', '.join(valid_plans)}"
+            )
+        return v
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def validate_provider(cls, v: Any) -> str:
+        """Validate and normalize provider value."""
+        if isinstance(v, str):
+            v_lower = v.lower()
+            valid_providers = ["anthropic", "z_ai", "openai", "google", "all"]
+            if v_lower in valid_providers:
+                return v_lower
+            raise ValueError(
+                f"Invalid provider: {v}. Must be one of: {', '.join(valid_providers)}"
             )
         return v
 

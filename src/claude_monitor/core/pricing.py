@@ -1,14 +1,14 @@
-"""Pricing calculations for Claude models.
+"""Pricing calculations for multiple AI model providers.
 
 This module provides the PricingCalculator class for calculating costs
-based on token usage and model pricing. It supports all Claude model types
-(Opus, Sonnet, Haiku) and provides both simple and detailed cost calculations
-with caching.
+based on token usage and model pricing. It supports multiple providers
+including Anthropic (Claude), Z.ai (GLM), OpenAI, and Google models,
+with both simple and detailed cost calculations with caching.
 """
 
 from typing import Any, Dict, Optional
 
-from claude_monitor.core.models import CostMode, TokenCounts, normalize_model_name
+from claude_monitor.core.models import CostMode, Provider, TokenCounts, normalize_model_name, detect_provider_from_model
 
 
 class PricingCalculator:
@@ -21,29 +21,113 @@ class PricingCalculator:
     Features:
     - Configurable pricing (from config or custom)
     - Fallback hardcoded pricing for robustness
+    - Multi-provider support (Anthropic, Z.ai, OpenAI, Google)
     - Caching for performance
     - Support for all token types including cache
     - Backward compatible with both APIs
     """
 
     FALLBACK_PRICING: Dict[str, Dict[str, float]] = {
-        "opus": {
+        # Anthropic Claude models (per 1M tokens)
+        "claude-3-opus": {
             "input": 15.0,
             "output": 75.0,
             "cache_creation": 18.75,
             "cache_read": 1.5,
         },
-        "sonnet": {
+        "claude-3-sonnet": {
             "input": 3.0,
             "output": 15.0,
             "cache_creation": 3.75,
             "cache_read": 0.3,
         },
-        "haiku": {
+        "claude-3-haiku": {
             "input": 0.25,
             "output": 1.25,
             "cache_creation": 0.3,
             "cache_read": 0.03,
+        },
+        "claude-3-5-sonnet": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_creation": 3.75,
+            "cache_read": 0.3,
+        },
+        "claude-3-5-haiku": {
+            "input": 0.25,
+            "output": 1.25,
+            "cache_creation": 0.3,
+            "cache_read": 0.03,
+        },
+        # Z.ai GLM models (per 1M tokens) - accurate pricing from Z.ai docs
+        "glm-4.5": {
+            "input": 0.6,
+            "output": 2.2,
+            "cache_creation": 0.75,
+            "cache_read": 0.06,
+        },
+        "glm-4.5v": {
+            "input": 0.6,
+            "output": 1.8,
+            "cache_creation": 0.75,
+            "cache_read": 0.06,
+        },
+        "glm-4.5-x": {
+            "input": 2.2,
+            "output": 8.9,
+            "cache_creation": 2.75,
+            "cache_read": 0.22,
+        },
+        "glm-4.5-air": {
+            "input": 0.2,
+            "output": 1.1,
+            "cache_creation": 0.25,
+            "cache_read": 0.02,
+        },
+        "glm-4.5-airx": {
+            "input": 1.1,
+            "output": 4.5,
+            "cache_creation": 1.375,
+            "cache_read": 0.11,
+        },
+        "glm-4-32b-0414-128k": {
+            "input": 0.1,
+            "output": 0.1,
+            "cache_creation": 0.125,
+            "cache_read": 0.01,
+        },
+        "glm-4.5-flash": {
+            "input": 0.0,
+            "output": 0.0,
+            "cache_creation": 0.0,
+            "cache_read": 0.0,
+        },
+        # Legacy GLM-4 pricing (for backward compatibility)
+        "glm-4": {
+            "input": 0.6,
+            "output": 2.2,
+            "cache_creation": 0.75,
+            "cache_read": 0.06,
+        },
+        # OpenAI models (per 1M tokens)
+        "gpt-4": {
+            "input": 30.0,
+            "output": 60.0,
+            "cache_creation": 37.5,
+            "cache_read": 3.0,
+        },
+        "gpt-3.5": {
+            "input": 0.5,
+            "output": 1.5,
+            "cache_creation": 0.625,
+            "cache_read": 0.05,
+        },
+        # Google models (per 1M tokens) - estimated pricing
+        "gemini-pro": {
+            "input": 1.0,
+            "output": 2.0,
+            "cache_creation": 1.25,
+            "cache_read": 0.1,
         },
     }
 
@@ -54,18 +138,10 @@ class PricingCalculator:
 
         Args:
             custom_pricing: Optional custom pricing dictionary to override defaults.
-                          Should follow same structure as MODEL_PRICING.
+                          Should follow same structure as FALLBACK_PRICING.
         """
         # Use fallback pricing if no custom pricing provided
-        self.pricing: Dict[str, Dict[str, float]] = custom_pricing or {
-            "claude-3-opus": self.FALLBACK_PRICING["opus"],
-            "claude-3-sonnet": self.FALLBACK_PRICING["sonnet"],
-            "claude-3-haiku": self.FALLBACK_PRICING["haiku"],
-            "claude-3-5-sonnet": self.FALLBACK_PRICING["sonnet"],
-            "claude-3-5-haiku": self.FALLBACK_PRICING["haiku"],
-            "claude-sonnet-4-20250514": self.FALLBACK_PRICING["sonnet"],
-            "claude-opus-4-20250514": self.FALLBACK_PRICING["opus"],
-        }
+        self.pricing: Dict[str, Dict[str, float]] = custom_pricing or self.FALLBACK_PRICING.copy()
         self._cost_cache: Dict[str, float] = {}
 
     def calculate_cost(
@@ -148,11 +224,12 @@ class PricingCalculator:
             KeyError: If strict=True and model is unknown
         """
         # Try normalized model name first
-        normalized = normalize_model_name(model)
+        provider = detect_provider_from_model(model)
+        normalized = normalize_model_name(model, provider)
 
         # Check configured pricing
         if normalized in self.pricing:
-            pricing = self.pricing[normalized]
+            pricing = self.pricing[normalized].copy()
             # Ensure cache pricing exists
             if "cache_creation" not in pricing:
                 pricing["cache_creation"] = pricing["input"] * 1.25
@@ -162,7 +239,7 @@ class PricingCalculator:
 
         # Check original model name
         if model in self.pricing:
-            pricing = self.pricing[model]
+            pricing = self.pricing[model].copy()
             if "cache_creation" not in pricing:
                 pricing["cache_creation"] = pricing["input"] * 1.25
             if "cache_read" not in pricing:
@@ -173,14 +250,55 @@ class PricingCalculator:
         if strict:
             raise KeyError(f"Unknown model: {model}")
 
-        # Fallback to hardcoded pricing based on model type
+        # Fallback to hardcoded pricing based on model type and provider
         model_lower = model.lower()
-        if "opus" in model_lower:
-            return self.FALLBACK_PRICING["opus"]
-        if "haiku" in model_lower:
-            return self.FALLBACK_PRICING["haiku"]
-        # Default to Sonnet pricing
-        return self.FALLBACK_PRICING["sonnet"]
+        provider = detect_provider_from_model(model)
+        
+        if provider == Provider.Z_AI:
+            if "glm-4.5-x" in model_lower:
+                return self.FALLBACK_PRICING["glm-4.5-x"]
+            elif "glm-4.5-airx" in model_lower:
+                return self.FALLBACK_PRICING["glm-4.5-airx"]
+            elif "glm-4.5-air" in model_lower:
+                return self.FALLBACK_PRICING["glm-4.5-air"]
+            elif "glm-4.5v" in model_lower or "glm-4.5-v" in model_lower:
+                return self.FALLBACK_PRICING["glm-4.5v"]
+            elif "glm-4.5-flash" in model_lower:
+                return self.FALLBACK_PRICING["glm-4.5-flash"]
+            elif "glm-4.5" in model_lower:
+                return self.FALLBACK_PRICING["glm-4.5"]
+            elif "glm-4-32b-0414-128k" in model_lower:
+                return self.FALLBACK_PRICING["glm-4-32b-0414-128k"]
+            elif "glm-4" in model_lower:
+                return self.FALLBACK_PRICING["glm-4"]
+            elif "glm-3" in model_lower:
+                return self.FALLBACK_PRICING["glm-3"]
+            else:
+                # Default GLM pricing
+                return self.FALLBACK_PRICING["glm-4.5"]
+        elif provider == Provider.OPENAI:
+            if "gpt-4" in model_lower:
+                return self.FALLBACK_PRICING["gpt-4"]
+            elif "gpt-3.5" in model_lower or "gpt-3-5" in model_lower:
+                return self.FALLBACK_PRICING["gpt-3.5"]
+            else:
+                # Default GPT pricing
+                return self.FALLBACK_PRICING["gpt-3.5"]
+        elif provider == Provider.GOOGLE:
+            if "gemini" in model_lower:
+                return self.FALLBACK_PRICING["gemini-pro"]
+            else:
+                # Default to reasonable pricing
+                return {"input": 1.0, "output": 2.0, "cache_creation": 1.25, "cache_read": 0.1}
+        else:
+            # Anthropic fallback
+            if "opus" in model_lower:
+                return self.FALLBACK_PRICING["claude-3-opus"]
+            elif "haiku" in model_lower:
+                return self.FALLBACK_PRICING["claude-3-haiku"]
+            else:
+                # Default to Sonnet pricing
+                return self.FALLBACK_PRICING["claude-3-sonnet"]
 
     def calculate_cost_for_entry(
         self, entry_data: Dict[str, Any], mode: CostMode

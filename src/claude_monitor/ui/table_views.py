@@ -66,6 +66,7 @@ class TableViewsController:
         table.add_column(
             period_column_name, style=self.key_style, width=period_column_width
         )
+        table.add_column("Provider", style=self.value_style, width=10)
         table.add_column("Models", style=self.value_style, width=20)
         table.add_column("Input", style=self.value_style, justify="right", width=12)
         table.add_column("Output", style=self.value_style, justify="right", width=12)
@@ -96,6 +97,7 @@ class TableViewsController:
         """
         for data in data_list:
             models_text = self._format_models(data["models_used"])
+            provider_text = self._format_providers(data.get("providers_used", []))
             total_tokens = (
                 data["input_tokens"]
                 + data["output_tokens"]
@@ -105,6 +107,7 @@ class TableViewsController:
 
             table.add_row(
                 data[period_key],
+                provider_text,
                 models_text,
                 format_number(data["input_tokens"]),
                 format_number(data["output_tokens"]),
@@ -122,7 +125,7 @@ class TableViewsController:
             totals: Dictionary with total statistics
         """
         # Add separator
-        table.add_row("", "", "", "", "", "", "", "")
+        table.add_row("", "", "", "", "", "", "", "", "")
 
         # Add totals row
         table.add_row(
@@ -260,6 +263,39 @@ class TableViewsController:
             formatted = "\n".join([f"• {model}" for model in first_two])
             formatted += f"\n• ...and {remaining_count} more"
             return formatted
+
+    def _format_providers(self, providers: List[str]) -> str:
+        """Format provider names for display.
+
+        Args:
+            providers: List of provider names
+
+        Returns:
+            Formatted string of provider names
+        """
+        if not providers:
+            return "Mixed"
+
+        # Create short display for providers
+        if len(providers) == 1:
+            # Shorten provider names for display
+            provider_map = {
+                "anthropic": "Anthropic",
+                "z_ai": "Z.ai",
+                "openai": "OpenAI", 
+                "google": "Google"
+            }
+            return provider_map.get(providers[0], providers[0])
+        elif len(providers) <= 2:
+            provider_map = {
+                "anthropic": "Anthropic",
+                "z_ai": "Z.ai",
+                "openai": "OpenAI",
+                "google": "Google"
+            }
+            return "\n".join([provider_map.get(p, p) for p in providers])
+        else:
+            return "Multiple"
 
     def create_no_data_display(self, view_type: str) -> Panel:
         """Create a display for when no data is available.

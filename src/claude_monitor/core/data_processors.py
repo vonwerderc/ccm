@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from claude_monitor.utils.time_utils import TimezoneHandler
+from claude_monitor.core.models import Provider, detect_provider_from_model
 
 
 class TimestampProcessor:
@@ -221,6 +222,51 @@ class DataConverter:
                 return candidate
 
         return default
+
+    @staticmethod
+    def extract_provider_and_model(
+        data: Dict[str, Any], 
+        default_model: str = "claude-3-5-sonnet",
+        default_provider: Provider = Provider.ANTHROPIC
+    ) -> tuple[str, Provider]:
+        """Extract both provider and model information from data.
+
+        Args:
+            data: Data containing model and provider information
+            default_model: Default model name if not found
+            default_provider: Default provider if not detected
+
+        Returns:
+            Tuple of (model_name, provider)
+        """
+        model_name = DataConverter.extract_model_name(data, default_model)
+        provider = detect_provider_from_model(model_name)
+        
+        # Also check for provider-specific fields in the data
+        provider_candidates = [
+            data.get("provider"),
+            data.get("Provider"),
+            data.get("api_provider"),
+            data.get("service"),
+        ]
+        
+        for candidate in provider_candidates:
+            if candidate and isinstance(candidate, str):
+                candidate_lower = candidate.lower()
+                if "anthropic" in candidate_lower or "claude" in candidate_lower:
+                    provider = Provider.ANTHROPIC
+                    break
+                elif "z_ai" in candidate_lower or "z.ai" in candidate_lower or "glm" in candidate_lower:
+                    provider = Provider.Z_AI
+                    break
+                elif "openai" in candidate_lower or "gpt" in candidate_lower:
+                    provider = Provider.OPENAI
+                    break
+                elif "google" in candidate_lower or "gemini" in candidate_lower:
+                    provider = Provider.GOOGLE
+                    break
+        
+        return model_name, provider
 
     @staticmethod
     def to_serializable(obj: Any) -> Any:
